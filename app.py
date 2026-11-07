@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 from model import ModelUnavailable, Ollama
 
@@ -14,9 +14,17 @@ Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, ma
 Body = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20000)]
 
 
+QuestionText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
 class Document(BaseModel):
     title: Title
     text: Body
+
+
+class Question(BaseModel):
+    question: QuestionText
+    limit: int = Field(default=3, ge=1, le=8)
 
 
 @contextmanager
@@ -119,6 +127,31 @@ def create_app(path=None, model=None):
             if not row.rowcount:
                 raise HTTPException(404, "Document not found")
         return Response(status_code=204)
+
+    def retrieve(question):
+        with database(path) as db:
+            rows = db.execute("""
+                SELECT document_id, title, position, chunks.text, vector
+                FROM chunks JOIN documents ON documents.id = document_id
+                WHERE model = ? ORDER BY document_id, position
+            """, (model.embedding_model,)).fetchall()
+        if not rows:
+            return []
+        query_vector, = model.embed([question.question], query=True)
+        ranked = []
+        for row in rows:
+            hit = dict(row)
+            vector = json.loads(hit.pop("vector"))
+            if len(vector) != len(query_vector):
+                raise ModelUnavailable("Embedding dimensions changed. Reindex the documents.")
+            hit["score"] = sum(a * b for a, b in zip(query_vector, vector))
+            ranked.append(hit)
+        ranked.sort(key=lambda hit: hit["score"], reverse=True)
+        return ranked[:question.limit]
+
+    @api.post("/search")
+    def search(question: Question):
+        return retrieve(question)
 
     return api
 
