@@ -4,6 +4,9 @@ import os
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from pydantic import BaseModel
+
+
 class ModelUnavailable(Exception):
     pass
 
@@ -47,3 +50,20 @@ class Ollama:
             return normalized
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise ModelUnavailable("Ollama returned invalid embeddings") from error
+
+    def chat(self, instruction: str, data: dict, schema: type[BaseModel]):
+        response = self.post("/api/chat", {
+            "model": self.chat_model,
+            "messages": [
+                {"role": "system", "content": instruction},
+                {"role": "user", "content": json.dumps(data)},
+            ],
+            "stream": False,
+            "format": schema.model_json_schema(),
+            "think": False,
+            "options": {"temperature": 0},
+        })
+        try:
+            return schema.model_validate_json(response["message"]["content"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ModelUnavailable("Ollama returned invalid structured output") from error

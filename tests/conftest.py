@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app import create_app
+from app import Selection, create_app
 
 
 class StubModel:
@@ -10,6 +10,11 @@ class StubModel:
     def embed(self, texts, *, query=False):
         return [[float(term in text.lower()) for term in ("expense", "production", "incident")]
                 for text in texts]
+
+
+    def chat(self, instruction, data, schema):
+        assert schema is Selection
+        return Selection(source_ids=[1, 1, 999])
 
 
 @pytest.fixture
